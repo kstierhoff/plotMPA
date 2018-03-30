@@ -1,0 +1,163 @@
+---
+title: "plotMPA"
+author: "Kevin Stierhoff"
+date: "March 30, 2018"
+output: html_document
+---
+
+```{r LoadLibraries, error=FALSE, message=FALSE, warning=FALSE, echo=F}
+# List packages required to run the script -------------------------------------
+# May be necessary to increase the max. number of DLLs per R session
+# If you get an error, run the line below to increase the number of DLLs allowed
+# Sys.setenv(MAX_NUM_DLLS=200)
+pkgs <- c("tidyverse","swfscMisc","lubridate","sp","rgeos","sp","maptools",
+          "knitr","geosphere","ggrepel","cowplot","sf","leaflet", "htmltools",
+          "RODBC","kableExtra","rnaturalearth","shadowtext","here")
+# Install and load all CRAN packages provided from a character vector
+load_pkgs = function(pkgs) {
+  new_pkgs = pkgs[!(pkgs %in% installed.packages()[ ,'Package'])]
+  if (length(new_pkgs) > 0) install.packages(new_pkgs,repos = "http://cran.cnr.berkeley.edu/")
+  invisible(lapply(pkgs,function(x)
+    suppressPackageStartupMessages(library(x,character.only = T))))
+}
+# Load packages
+load_pkgs(pkgs)
+
+# Load dev packages -------------------------------------------------------
+# Install and load surveyR package from github
+if ("surveyR" %in% installed.packages()[ ,'Package'] == F) {
+  install_github("kstierhoff/surveyR")
+}
+library(surveyR)
+
+# Set system time zone to GMT
+Sys.setenv(tz = "GMT")
+# Define method of table generation (whether kable or xtable) for best formatting
+doc.type <- knitr::opts_knit$get('rmarkdown.pandoc.to')
+if (is.null(doc.type)) {doc.type <- "html"}
+
+# Set global knitr chunk options
+if (.Platform$OS.type == "unix") {
+  # Do not specify Cairo device for MacOS
+  knitr::opts_chunk$set(echo = F, warning = F, message = F,
+                        fig.align = 'center', out.width = '100%', dev = "png", dpi = 150)
+} else {
+  knitr::opts_chunk$set(echo = F, warning = F, message = F,
+                        fig.align = 'center', out.width = '100%', dev = "png", dpi = 150,
+                        dev.args = list(type = "cairo"))
+}
+
+# determine global knitr table format
+if (doc.type == "latex") {
+  knitr.format <- "latex"
+} else {
+  knitr.format <- "html" 
+}
+
+# Select tile to use for Leaflet map
+# Some good options include CartoDB.Positron, Stamen.Terrain, Esri.WorldImagery, and Esri.OceanBasemap
+# View all here: http://leaflet-extras.github.io/leaflet-providers/preview/index.html
+leaflet.tile <- "Esri.OceanBasemap" 
+```
+
+```{r Functions}
+# Convert points to spatial lines -----------------------------------------
+points2line <- function(data, long, lat, id_field = NULL, sort_field = NULL) {
+  # Convert to SpatialPointsDataFrame
+  coordinates(data) <- c(long, lat)
+  # If there is a sort field...
+  if (!is.null(sort_field)) {
+    if (!is.null(id_field)) {
+      data <- data[order(data[[id_field]], data[[sort_field]]), ]
+    } else {
+      data <- data[order(data[[sort_field]]), ]
+    }
+  }
+  # If there is only one path...
+  if (is.null(id_field)) {
+    lines <- SpatialLines(list(Lines(list(Line(data)), "id")))
+    return(lines)
+    # Now, if we have multiple lines...
+  } else if (!is.null(id_field)) {
+    # Split into a list by ID field
+    paths <- sp::split(data, data[[id_field]])
+    sp_lines <- SpatialLines(list(Lines(list(Line(paths[[1]])), "line1")))
+    # I like for loops, what can I say...
+    for (p in 2:length(paths)) {
+      id <- paste0("line", as.character(p))
+      l <- SpatialLines(list(Lines(list(Line(paths[[p]])), id)))
+      sp_lines <- spRbind(sp_lines, l)
+    }
+    return(sp_lines)
+  }
+}
+```
+
+```{r UserControls}
+get.db     <- F
+save.figs  <- F
+do.spatial <- F
+```
+
+```{r GetWaypoints}
+wpt <- read_csv(here("Data/waypoints_all.csv")) 
+uctd <- read_csv(here("Data/waypoints_uctd.csv")) 
+```
+
+```{r LoadShapefiles,include=F}
+# Get CA State Waters shapefile
+ca_waters <- st_read(here("GIS/MAN_CA_StateWater.shp")) %>% 
+  st_transform(4326)
+
+# CA MPAs
+ca_mpas <- st_read(here("GIS/MPA_CA_Existing.shp")) %>% 
+  st_transform(4326) %>% 
+  mutate(MPA = paste(NAME, Type))
+```
+
+```{r ConvertToSpatial}
+# Get transect points
+tx.c <- filter(wpt, Type == "Compulsory")
+tx.a <- filter(wpt, Type == "Adaptive")
+tx.s <- filter(wpt, Type == "Saildrone")
+
+# Get transect waypoints
+wpt.a <- st_as_sf(tx.a, coords = c("Longitude","Latitude"), crs = 4326)
+wpt.c <- st_as_sf(tx.c, coords = c("Longitude","Latitude"), crs = 4326)
+wpt.s <- st_as_sf(tx.s, coords = c("Longitude","Latitude"), crs = 4326)
+
+# Get UCTD waypoints
+wpt.uctd <- st_as_sf(uctd, coords = c("Longitude","Latitude"), crs = 4326) 
+
+# Convert points to lines
+tx.a <- points2line(data = tx.a, "Longitude", "Latitude", "Transect", "Waypoint") %>%
+  st_as_sf()
+tx.c <- points2line(data = tx.c, "Longitude", "Latitude", "Transect", "Waypoint") %>%
+  st_as_sf()
+tx.s <- points2line(data = tx.s, "Longitude", "Latitude", "Transect", "Waypoint") %>%
+  st_as_sf()
+```
+
+```{r Leaflet}
+# Configure palette for MPAs
+factpal <- colorFactor(topo.colors(10), ca_mpas$MPA)
+
+# Create leaflet map
+leaflet() %>% 
+  addProviderTiles(leaflet.tile) %>% 
+  addPolygons(data = ca_waters, weight = 2, color = "black", fillColor = "transparent") %>% 
+  addPolygons(data = ca_mpas, color = "black", weight = 2, fillColor =  ~factpal(MPA), fillOpacity = 1,
+              label = ~htmlEscape(MPA)) %>%
+  addPolylines(data = tx.c, color = "blue",   weight = 2) %>% 
+  addPolylines(data = tx.a, color = "red",    weight = 2) %>% 
+  addPolylines(data = tx.s, color = "orange", weight = 4) %>% 
+  
+  addCircleMarkers(data = wpt.a, radius = 3, color = "red", stroke = FALSE, fillOpacity = 0.75,
+                   label = ~htmlEscape(paste("Adaptive", Waypoint))) %>% 
+  addCircleMarkers(data = wpt.c, radius = 3, color = "blue", stroke = FALSE, fillOpacity = 0.75,
+                   label = ~htmlEscape(paste("Compulsory", Waypoint))) %>% 
+  addCircleMarkers(data = wpt.s, radius = 3, color = "Orange", stroke = FALSE, fillOpacity = 0.75,
+                   label = ~htmlEscape(paste("Saildrone", Waypoint))) %>% 
+  addCircleMarkers(data = wpt.uctd, radius = 2, color = "black", fill = "transparent", stroke = TRUE,
+                   label = ~htmlEscape(Name))
+```
