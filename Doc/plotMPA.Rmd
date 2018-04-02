@@ -120,11 +120,13 @@ ca_mpas <- st_read(here("GIS/MPA_CA_Existing.shp")) %>%
 tx.c <- filter(wpt, Type == "Compulsory")
 tx.a <- filter(wpt, Type == "Adaptive")
 tx.s <- filter(wpt, Type == "Saildrone")
+tx.m <- filter(wpt, Type == "Mammal")
 
 # Get transect waypoints
 wpt.a <- st_as_sf(tx.a, coords = c("Longitude","Latitude"), crs = 4326)
 wpt.c <- st_as_sf(tx.c, coords = c("Longitude","Latitude"), crs = 4326)
 wpt.s <- st_as_sf(tx.s, coords = c("Longitude","Latitude"), crs = 4326)
+wpt.m <- st_as_sf(tx.m, coords = c("Longitude","Latitude"), crs = 4326)
 
 # Get UCTD waypoints
 wpt.uctd <- st_as_sf(uctd, coords = c("Longitude","Latitude"), crs = 4326) 
@@ -135,6 +137,8 @@ tx.a <- points2line(data = tx.a, "Longitude", "Latitude", "Transect", "Waypoint"
 tx.c <- points2line(data = tx.c, "Longitude", "Latitude", "Transect", "Waypoint") %>%
   st_as_sf()
 tx.s <- points2line(data = tx.s, "Longitude", "Latitude", "Transect", "Waypoint") %>%
+  st_as_sf()
+tx.m <- points2line(data = tx.m, "Longitude", "Latitude", "Transect", "Waypoint") %>%
   st_as_sf()
 ```
 
@@ -148,16 +152,18 @@ leaflet() %>%
   addPolygons(data = ca_waters, weight = 2, color = "black", fillColor = "transparent") %>% 
   addPolygons(data = ca_mpas, color = "black", weight = 2, fillColor =  ~factpal(MPA), fillOpacity = 1,
               label = ~htmlEscape(MPA)) %>%
-  addPolylines(data = tx.c, color = "blue",   weight = 2) %>% 
-  addPolylines(data = tx.a, color = "red",    weight = 2) %>% 
+  addPolylines(data = tx.c, color = "blue", weight = 2) %>% 
+  addPolylines(data = tx.a, color = "red", weight = 2) %>% 
+  addPolylines(data = tx.m, color = "green", weight = 2) %>% 
   addPolylines(data = tx.s, color = "orange", weight = 4) %>% 
-  
   addCircleMarkers(data = wpt.a, radius = 3, color = "red", stroke = FALSE, fillOpacity = 0.75,
                    label = ~htmlEscape(paste("Adaptive", Waypoint))) %>% 
   addCircleMarkers(data = wpt.c, radius = 3, color = "blue", stroke = FALSE, fillOpacity = 0.75,
                    label = ~htmlEscape(paste("Compulsory", Waypoint))) %>% 
-  addCircleMarkers(data = wpt.s, radius = 3, color = "Orange", stroke = FALSE, fillOpacity = 0.75,
+  addCircleMarkers(data = wpt.s, radius = 3, color = "orange", stroke = FALSE, fillOpacity = 0.75,
                    label = ~htmlEscape(paste("Saildrone", Waypoint))) %>% 
+  addCircleMarkers(data = wpt.m, radius = 3, color = "green", stroke = FALSE, fillOpacity = 0.75,
+                   label = ~htmlEscape(paste("Marine Mammal", Waypoint))) %>% 
   addCircleMarkers(data = wpt.uctd, radius = 2, color = "black", fill = "transparent", stroke = TRUE,
                    label = ~htmlEscape(Name))
 ```
