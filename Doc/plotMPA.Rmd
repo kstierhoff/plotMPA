@@ -1,7 +1,6 @@
 ---
-title: "plotMPA"
+title: "Planned sampling during the Summer 2018 CCE/CalCurCEAS Survey"
 author: "Kevin Stierhoff"
-date: "March 30, 2018"
 output: html_document
 ---
 
@@ -142,6 +141,12 @@ tx.m <- points2line(data = tx.m, "Longitude", "Latitude", "Transect", "Waypoint"
   st_as_sf()
 ```
 
+`r format(Sys.time(), "%d %B %Y")`
+
+# Interative map of 1807RL sampling
+
+Planned compulsory (blue), adaptive (red), marine mammal (green), Saildrone (orange), and UCTD (gray) stations/transects. Waypoint info can be found in the tables below the map.
+
 ```{r Leaflet}
 # Configure palette for MPAs
 factpal <- colorFactor(topo.colors(10), ca_mpas$MPA)
@@ -163,7 +168,68 @@ leaflet() %>%
   addCircleMarkers(data = wpt.s, radius = 3, color = "orange", stroke = FALSE, fillOpacity = 0.75,
                    label = ~htmlEscape(paste("Saildrone", Waypoint))) %>% 
   addCircleMarkers(data = wpt.m, radius = 3, color = "green", stroke = FALSE, fillOpacity = 0.75,
-                   label = ~htmlEscape(paste("Marine Mammal", Waypoint))) %>% 
+                   label = ~htmlEscape(paste("Marine mammal", Waypoint))) %>% 
   addCircleMarkers(data = wpt.uctd, radius = 2, color = "black", fill = "transparent", stroke = TRUE,
                    label = ~htmlEscape(Name))
 ```
+
+# Compulsory waypoints
+
+```{r}
+# Print cluster check table
+filter(wpt, Type == "Compulsory") %>% 
+  kable(format = knitr.format,booktabs = T, escape = F,
+        align = c("c")) %>% 
+  kable_styling(bootstrap_options = c("striped","hover","condensed"),full_width = F) %>%
+  row_spec(0, align = c("c")) %>% 
+  scroll_box(height = "500px")
+```
+
+# Adaptive waypoints
+
+```{r}
+# Print cluster check table
+filter(wpt, Type == "Adaptive") %>% 
+  kable(format = knitr.format,booktabs = T, escape = F,
+        align = c("c")) %>% 
+  kable_styling(bootstrap_options = c("striped","hover","condensed"),full_width = F) %>%
+  row_spec(0, align = c("c")) %>% 
+  scroll_box(height = "500px")
+```
+
+# Saildrone waypoints
+
+```{r}
+# Print cluster check table
+filter(wpt, Type == "Saildrone") %>% 
+  kable(format = knitr.format,booktabs = T, escape = F,
+        align = c("c")) %>% 
+  kable_styling(bootstrap_options = c("striped","hover","condensed"),full_width = F) %>%
+  row_spec(0, align = c("c")) %>% 
+  scroll_box(height = "500px")
+```
+
+# Marine Mammal waypoints
+
+```{r}
+# Print cluster check table
+filter(wpt, Type == "Mammal") %>% 
+  kable(format = knitr.format,booktabs = T, escape = F,
+        align = c("c")) %>% 
+  kable_styling(bootstrap_options = c("striped","hover","condensed"),full_width = F) %>%
+  row_spec(0, align = c("c")) %>% 
+  scroll_box(height = "500px")
+```
+
+# UCTD waypoints
+
+```{r}
+# Print cluster check table
+uctd %>% 
+  kable(format = knitr.format,booktabs = T, escape = F,
+        align = c("c")) %>% 
+  kable_styling(bootstrap_options = c("striped","hover","condensed"),full_width = F) %>%
+  row_spec(0, align = c("c")) %>% 
+  scroll_box(height = "500px")
+```
+
