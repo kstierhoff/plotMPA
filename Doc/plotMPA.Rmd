@@ -10,8 +10,8 @@ output: html_document
 # If you get an error, run the line below to increase the number of DLLs allowed
 # Sys.setenv(MAX_NUM_DLLS=200)
 pkgs <- c("tidyverse","swfscMisc","lubridate","sp","rgeos","sp","maptools",
-          "knitr","geosphere","ggrepel","cowplot","sf","leaflet", "htmltools",
-          "RODBC","kableExtra","rnaturalearth","shadowtext","here","mapview")
+          "knitr","geosphere","ggrepel","cowplot","sf","leaflet","leaflet.extras","htmltools",
+          "RODBC","kableExtra","rnaturalearth","shadowtext","here","mapview","magick")
 # Install and load all CRAN packages provided from a character vector
 load_pkgs = function(pkgs) {
   new_pkgs = pkgs[!(pkgs %in% installed.packages()[ ,'Package'])]
@@ -136,8 +136,12 @@ wpt.m <- st_as_sf(tx.m, coords = c("Longitude","Latitude"), crs = 4326) %>%
   mutate(long = map_dbl(geometry, ~st_centroid(.x)[[1]]),
          lat  = map_dbl(geometry, ~st_centroid(.x)[[2]]))
 
+wpt.t <- st_as_sf(tx.t, coords = c("Longitude","Latitude"), crs = 4326) %>% 
+  mutate(long = map_dbl(geometry, ~st_centroid(.x)[[1]]),
+         lat  = map_dbl(geometry, ~st_centroid(.x)[[2]]))
+
 # Get UCTD waypoints
-wpt.uctd <- st_as_sf(uctd, coords = c("Longitude","Latitude"), crs = 4326) %>% 
+wpt.u <- st_as_sf(uctd, coords = c("Longitude","Latitude"), crs = 4326) %>% 
   mutate(long = map_dbl(geometry, ~st_centroid(.x)[[1]]),
          lat  = map_dbl(geometry, ~st_centroid(.x)[[2]]))
 
@@ -167,7 +171,7 @@ tx.mapview <- tx.a %>%
 
 `r format(Sys.time(), "%d %B %Y")`
 
-# Interative map tool
+# Interative map viewer
 
 Planned compulsory (blue), adaptive (red), marine mammal (green), Saildrone (orange), and UCTD (gray) stations/transects. You may pan (click-and-drag or use arrow keys), zoom (using the +/- key, your mouse wheel, or the controls on the map), and click objects to view more details about map features. Different base maps may be chosen and layers may be toggled on/off using the layer control feature in the upper left corner. Additional waypoint information may be found in the tables below the map.
 
@@ -195,24 +199,33 @@ leaflet() %>%
                    label = ~htmlEscape(paste("Saildrone", Waypoint, lat, "N", long, "W"))) %>% 
   addCircleMarkers(data = wpt.m, radius = 3, color = "green", stroke = FALSE, fillOpacity = 0.75,
                    label = ~htmlEscape(paste("Marine mammal", Waypoint, lat, "N", long, "W"))) %>% 
-  addCircleMarkers(data = wpt.uctd, radius = 2, color = "black", fill = "transparent", stroke = TRUE,
+  addCircleMarkers(data = wpt.u, radius = 2, color = "black", fill = "transparent", stroke = TRUE,
                    label = ~htmlEscape(paste(Name, lat, "N", long, "W"))) %>% 
   addMouseCoordinates(style = "basic")
 ```
 
-```{r Mapview,eval = T}
-# Select tile to use for Leaflet map
+```{r Mapview, out.width='100%'}
+# Select tiles to use for Leaflet map
 # Some good options include CartoDB.Positron, Stamen.Terrain, Esri.WorldImagery, and Esri.OceanBasemap
 # View all here: http://leaflet-extras.github.io/leaflet-providers/preview/index.html
- 
+
+# Configure mapview options
 mapviewOptions(basemaps = c("Esri.OceanBasemap","Esri.WorldImagery","CartoDB.Positron"))
 
+# Create mapview map
 mapview(ca_waters, alpha = 0.7, alpha.region = 0.1, layer.name = "CA State Waters") +
   mapview(ca_mpas, zcol = "Type", layer.name = "CA MPAs") +
-  mapview(tx.mapview, color = "black", alpha = 0.5,layer.name = "Transects") +
-  mapview(wpt.mapview, zcol = "Type", cex = 4, col.regions = c("red","blue","green","orange","yellow"),
-          layer.name = "Transect Waypoints") +
-  mapview(wpt.uctd, color = "black", cex = 2, fill = "black", layer.name = "UCTD Stations")
+  mapview(tx.c,  color = "blue",   alpha = 0.5, layer.name = "Compulsory Lines", col.regions = "blue") +
+  mapview(wpt.c, color = "blue",   cex = 4,     layer.name = "Compulsory Lines") +
+  mapview(tx.a,  color = "red",    alpha = 0.5, layer.name = "Adaptive Lines") +
+  mapview(wpt.a, color = "red",    cex = 4,     layer.name = "Adaptive Lines", col.regions = "red")  +
+  mapview(tx.m,  color = "green",  alpha = 0.5, layer.name = "Mammal Lines") +
+  mapview(wpt.m, color = "green",  cex = 4,     layer.name = "Mammal Lines", col.regions = "green") +  
+  mapview(tx.s,  color = "orange", alpha = 0.5, layer.name = "Saildrone Lines") +
+  mapview(wpt.s, color = "orange", cex = 4,     layer.name = "Saildrone Lines", col.regions = "orange") +  
+  mapview(tx.t,  color = "yellow", alpha = 0.5, layer.name = "Transit Lines") +
+  mapview(wpt.t, color = "yellow", cex = 4,     layer.name = "Transit Lines") + 
+  mapview(wpt.u, color = "black",  cex = 2,     layer.name = "UCTD Stations", col.regions = "black")
 ```
 
 # Compulsory waypoints
@@ -275,3 +288,6 @@ uctd %>%
   scroll_box(height = "500px")
 ```
 
+```{r AddLogo, fig.align='center',out.width='100%'}
+include_graphics(here("Images/ast_logo.png"))
+```
