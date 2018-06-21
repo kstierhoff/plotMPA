@@ -5,29 +5,17 @@ output: html_document
 ---
 
 ```{r LoadLibraries, error=FALSE, message=FALSE, warning=FALSE, echo=F}
-# List packages required to run the script -------------------------------------
-# May be necessary to increase the max. number of DLLs per R session
-# If you get an error, run the line below to increase the number of DLLs allowed
-# Sys.setenv(MAX_NUM_DLLS=200)
-pkgs <- c("tidyverse","swfscMisc","lubridate","sp","rgeos","sp","maptools",
-          "knitr","geosphere","ggrepel","cowplot","sf","leaflet","leaflet.extras","htmltools",
-          "RODBC","kableExtra","rnaturalearth","shadowtext","here","mapview","magick")
-# Install and load all CRAN packages provided from a character vector
-load_pkgs = function(pkgs) {
-  new_pkgs = pkgs[!(pkgs %in% installed.packages()[ ,'Package'])]
-  if (length(new_pkgs) > 0) install.packages(new_pkgs,repos = "http://cran.cnr.berkeley.edu/")
-  invisible(lapply(pkgs,function(x)
-    suppressPackageStartupMessages(library(x,character.only = T))))
-}
-# Load packages
-load_pkgs(pkgs)
+# Install and load pacman (library management package)
+if (!require("pacman")) install.packages("pacman")
 
-# Load dev packages -------------------------------------------------------
-# Install and load surveyR package from github
-if ("surveyR" %in% installed.packages()[ ,'Package'] == F) {
-  install_github("kstierhoff/surveyR")
-}
-library(surveyR)
+# Install and load required packages from CRAN ---------------------------------
+pacman::p_load(tidyverse,swfscMisc,lubridate,sp,rgeos,sp,maptools,
+          knitr,geosphere,ggrepel,cowplot,sf,leaflet,leaflet.extras,htmltools,
+          RODBC,kableExtra,rnaturalearth,shadowtext,here,mapview,magick)
+
+# Install and load required packages from Github -------------------------------
+# surveyR
+pacman::p_load_gh("kstierhoff/surveyR")
 
 # Set system time zone to GMT
 Sys.setenv(tz = "GMT")
@@ -94,13 +82,14 @@ points2line <- function(data, long, lat, id_field = NULL, sort_field = NULL) {
 
 ```{r UserControls}
 get.db     <- F
-save.figs  <- F
-do.spatial <- F
+save.figs  <- T
+do.spatial <- T
 ```
 
 ```{r GetWaypoints}
-wpt <- read_csv(here("Data/waypoints_all.csv"))
-uctd <- read_csv(here("Data/waypoints_uctd.csv")) 
+wpt     <- read_csv(here("Data/waypoints_all.csv"))
+uctd    <- read_csv(here("Data/waypoints_uctd.csv")) 
+calcofi <- read_csv(here("Data/calcofi_stations_all.csv"))  
 ```
 
 ```{r LoadShapefiles,include=F}
@@ -121,8 +110,10 @@ tx.a <- filter(wpt, Type == "Adaptive")
 tx.s <- filter(wpt, Type == "Saildrone")
 tx.m <- filter(wpt, Type == "Mammal")
 tx.t <- filter(wpt, Type == "Transit")
+tx.80 <- calcofi %>% 
+  filter(line == 80, corestation == TRUE)
 
-# Get transect waypoints
+# Create transect waypoints
 wpt.a <- st_as_sf(tx.a, coords = c("Longitude","Latitude"), crs = 4326) %>% 
   mutate(long = map_dbl(geometry, ~st_centroid(.x)[[1]]),
          lat  = map_dbl(geometry, ~st_centroid(.x)[[2]]))
@@ -140,8 +131,14 @@ wpt.t <- st_as_sf(tx.t, coords = c("Longitude","Latitude"), crs = 4326) %>%
   mutate(long = map_dbl(geometry, ~st_centroid(.x)[[1]]),
          lat  = map_dbl(geometry, ~st_centroid(.x)[[2]]))
 
-# Get UCTD waypoints
+# Create UCTD waypoints
 wpt.u <- st_as_sf(uctd, coords = c("Longitude","Latitude"), crs = 4326) %>% 
+  mutate(long = map_dbl(geometry, ~st_centroid(.x)[[1]]),
+         lat  = map_dbl(geometry, ~st_centroid(.x)[[2]]))
+
+# Create CalCOFI station waypoints
+wpt.80 <- tx.80 %>% 
+  st_as_sf(coords = c("long","lat"), crs = 4326) %>% 
   mutate(long = map_dbl(geometry, ~st_centroid(.x)[[1]]),
          lat  = map_dbl(geometry, ~st_centroid(.x)[[2]]))
 
@@ -155,6 +152,8 @@ tx.s <- points2line(data = tx.s, "Longitude", "Latitude", "Transect", "Waypoint"
 tx.m <- points2line(data = tx.m, "Longitude", "Latitude", "Transect", "Waypoint") %>%
   st_as_sf()
 tx.t <- points2line(data = tx.t, "Longitude", "Latitude") %>%
+  st_as_sf()
+tx.80 <- points2line(data = tx.80, "long", "lat") %>%
   st_as_sf()
 
 # Create mapview waypoints and transects
@@ -215,6 +214,8 @@ mapviewOptions(basemaps = c("Esri.OceanBasemap","Esri.WorldImagery","CartoDB.Pos
 # Create mapview map
 mapview(ca_waters, alpha = 0.7, alpha.region = 0.1, layer.name = "CA State Waters") +
   mapview(ca_mpas, zcol = "Type", layer.name = "CA MPAs") +
+  mapview(tx.80, color = "black",  alpha = 0.5, layer.name = "CalCOFI", col.regions = "black") +
+  mapview(wpt.80,color = "black",  cex = 4,     layer.name = "CalCOFI") +
   mapview(tx.c,  color = "blue",   alpha = 0.5, layer.name = "Compulsory Lines", col.regions = "blue") +
   mapview(wpt.c, color = "blue",   cex = 4,     layer.name = "Compulsory Lines") +
   mapview(tx.a,  color = "red",    alpha = 0.5, layer.name = "Adaptive Lines") +
