@@ -47,55 +47,24 @@ if (doc.type == "latex") {
 leaflet.tile <- "Esri.OceanBasemap" 
 ```
 
-```{r Functions}
-# Convert points to spatial lines -----------------------------------------
-points2line <- function(data, long, lat, id_field = NULL, sort_field = NULL) {
-  # Convert to SpatialPointsDataFrame
-  coordinates(data) <- c(long, lat)
-  # If there is a sort field...
-  if (!is.null(sort_field)) {
-    if (!is.null(id_field)) {
-      data <- data[order(data[[id_field]], data[[sort_field]]), ]
-    } else {
-      data <- data[order(data[[sort_field]]), ]
-    }
-  }
-  # If there is only one path...
-  if (is.null(id_field)) {
-    lines <- SpatialLines(list(Lines(list(Line(data)), "id")))
-    return(lines)
-    # Now, if we have multiple lines...
-  } else if (!is.null(id_field)) {
-    # Split into a list by ID field
-    paths <- sp::split(data, data[[id_field]])
-    sp_lines <- SpatialLines(list(Lines(list(Line(paths[[1]])), "line1")))
-    # I like for loops, what can I say...
-    for (p in 2:length(paths)) {
-      id <- paste0("line", as.character(p))
-      l <- SpatialLines(list(Lines(list(Line(paths[[p]])), id)))
-      sp_lines <- spRbind(sp_lines, l)
-    }
-    return(sp_lines)
-  }
-}
-```
-
 ```{r UserControls}
+# Load survey settings
+source(here("Doc/settings/settings_1807RL.r"))
+
+# Controls
 get.db     <- T
 save.figs  <- T
 do.spatial <- T
 get.nav    <- T
+
+# Set limits for latitude and longitude ----------------------------------------
+min.lat  <-   31
+max.lat  <-   52
+min.long <- -132
+max.long <- -117
 ```
 
 ```{r ProcessNav}
-# Define ERDDAP data variables
-survey.vessel.erddap <- "WTEGnrt" # Lasker == WTEG; Shimada == WTED; add "nrt" if using near-realtime data (e.g., WTEGnrt)
-survey.start         <- "2018-06-25" # Start of survey for ERDDAP vessel data query
-survey.end           <- "2018-09-23" # End of survey for ERDDAP vessel data query
-erddap.vars          <- c("time,latitude,longitude,seaTemperature")
-erddap.classes       <- c("factor", "numeric", "numeric", "numeric")
-erddap.headers       <- c("time", "lat", "long", "SST")
-
 if (get.nav) {
   # Generate ERDDAP URL
   dataURL <- URLencode(paste("http://coastwatch.pfeg.noaa.gov/erddap/tabledap/fsuNoaaShip",
@@ -104,13 +73,17 @@ if (get.nav) {
                              sep = ""))
   
   # Download and parse ERDDAP nav data
-  nav <- data.frame(read.csv(dataURL, header = F, colClasses = erddap.classes, row.names = NULL, skip = 0))
+  nav <- data.frame(read.csv(dataURL, header = F, colClasses = erddap.classes, 
+                             row.names = NULL, skip = 0))
+  
   names(nav) <- erddap.headers
   
   # Filter to remove bad SST values
-  nav <- filter(nav, is.nan(SST) == F, SST > 0, SST < 30) %>%
+  nav <- nav %>% 
     mutate(long = long - 360) %>%
-    mutate(datetime = as.POSIXct(time, format = "%FT%T")) 
+    mutate(datetime = ymd_hms(time)) %>% 
+    filter(between(lat, min.lat, max.lat),
+           between(long, min.long, max.long))
   
   # Save nav data
   save(nav, file = here("Data/nav_data.Rdata"))
@@ -118,9 +91,12 @@ if (get.nav) {
   # Load nav data
   load(here("Data/nav_data.Rdata"))
 }
+
 # Convert nav to simple feature
-nav.sf <- points2line(data = nav, "long", "lat") %>%
-  st_as_sf()
+nav.sf <- nav %>% 
+  st_as_sf(coords = c("long", "lat"), crs = 4326) %>% 
+  summarise(do_union = F) %>% 
+  st_cast("LINESTRING")
 ```
 
 ```{r GetWaypoints}
@@ -129,7 +105,7 @@ uctd    <- read_csv(here("Data/waypoints_uctd.csv"))
 calcofi <- read_csv(here("Data/calcofi_stations_all.csv"))  
 ```
 
-```{r LoadShapefiles,include=F}
+```{r load-shapefiles,include=F}
 # Get CA State Waters shapefile
 ca_waters <- st_read(here("GIS/MAN_CA_StateWater.shp")) %>% 
   st_transform(4326)
@@ -138,133 +114,101 @@ ca_waters <- st_read(here("GIS/MAN_CA_StateWater.shp")) %>%
 ca_mpas <- st_read(here("GIS/MPA_CA_Existing.shp")) %>% 
   st_transform(4326) %>% 
   mutate(MPA = paste(NAME, Type))
+
+# OR State Waters
+or_waters <- st_read(here("GIS/or_state_waters.shp")) %>% 
+  st_transform(4326)
+
+# National Marine Sanctuaries
+nms <- st_read(here("GIS/national_marine_sanctuaries.shp")) %>% 
+  st_transform(4326) %>% 
+  filter(REGION == "West Coast")
+  
 ```
 
-```{r ConvertToSpatial}
-# Get transect points
-tx.c <- filter(wpt, Type == "Compulsory")
-tx.a <- filter(wpt, Type == "Adaptive")
-tx.s <- filter(wpt, Type == "Saildrone")
-tx.m <- filter(wpt, Type == "Mammal")
-tx.t <- filter(wpt, Type == "Transit")
-tx.80 <- calcofi %>% 
-  filter(line == 80, corestation == TRUE)
+```{r convert-to-spatial}
+# Convert waypoints to sf points
+wpt.sf <- wpt %>% 
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326)
 
-# Create transect waypoints
-wpt.a <- st_as_sf(tx.a, coords = c("Longitude","Latitude"), crs = 4326) %>% 
-  mutate(long = map_dbl(geometry, ~st_centroid(.x)[[1]]),
-         lat  = map_dbl(geometry, ~st_centroid(.x)[[2]]))
-wpt.c <- st_as_sf(tx.c, coords = c("Longitude","Latitude"), crs = 4326) %>% 
-  mutate(long = map_dbl(geometry, ~st_centroid(.x)[[1]]),
-         lat  = map_dbl(geometry, ~st_centroid(.x)[[2]]))
-wpt.s <- st_as_sf(tx.s, coords = c("Longitude","Latitude"), crs = 4326) %>% 
-  mutate(long = map_dbl(geometry, ~st_centroid(.x)[[1]]),
-         lat  = map_dbl(geometry, ~st_centroid(.x)[[2]]))
-wpt.m <- st_as_sf(tx.m, coords = c("Longitude","Latitude"), crs = 4326) %>% 
-  mutate(long = map_dbl(geometry, ~st_centroid(.x)[[1]]),
-         lat  = map_dbl(geometry, ~st_centroid(.x)[[2]]))
+# Convert transects to sf linestrings
+tx.sf <- wpt %>% 
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>% 
+  group_by(Type, Transect) %>% 
+  summarise(do_union = F) %>% 
+  st_cast("LINESTRING")
 
-wpt.t <- st_as_sf(tx.t, coords = c("Longitude","Latitude"), crs = 4326) %>% 
-  mutate(long = map_dbl(geometry, ~st_centroid(.x)[[1]]),
-         lat  = map_dbl(geometry, ~st_centroid(.x)[[2]]))
-
-# Create UCTD waypoints
-wpt.u <- st_as_sf(uctd, coords = c("Longitude","Latitude"), crs = 4326) %>% 
-  mutate(long = map_dbl(geometry, ~st_centroid(.x)[[1]]),
-         lat  = map_dbl(geometry, ~st_centroid(.x)[[2]]))
-
-# Create CalCOFI station waypoints
-wpt.80 <- tx.80 %>% 
-  st_as_sf(coords = c("long","lat"), crs = 4326) %>% 
-  mutate(long = map_dbl(geometry, ~st_centroid(.x)[[1]]),
-         lat  = map_dbl(geometry, ~st_centroid(.x)[[2]]))
-
-# Convert points to lines
-tx.a <- points2line(data = tx.a, "Longitude", "Latitude", "Transect", "Waypoint") %>%
-  st_as_sf()
-tx.c <- points2line(data = tx.c, "Longitude", "Latitude", "Transect", "Waypoint") %>%
-  st_as_sf()
-tx.s <- points2line(data = tx.s, "Longitude", "Latitude", "Transect", "Waypoint") %>%
-  st_as_sf()
-tx.m <- points2line(data = tx.m, "Longitude", "Latitude", "Transect", "Waypoint") %>%
-  st_as_sf()
-tx.t <- points2line(data = tx.t, "Longitude", "Latitude") %>%
-  st_as_sf()
-tx.80 <- points2line(data = tx.80, "long", "lat") %>%
-  st_as_sf()
-
-# Create mapview waypoints and transects
-wpt.mapview <- st_as_sf(filter(wpt, Type != "Extra"), coords = c("Longitude","Latitude"), crs = 4326) %>% 
-  mutate(long = map_dbl(geometry, ~st_centroid(.x)[[1]]),
-         lat  = map_dbl(geometry, ~st_centroid(.x)[[2]]))
-
-tx.mapview <- tx.a %>% 
-  rbind(tx.c) %>% 
-  rbind(tx.s) %>% 
-  rbind(tx.m) %>% 
-  rbind(tx.t)
+# Convert UCTD stations to sf points
+uctd.sf <- uctd %>% 
+  st_as_sf(coords = c("Longitude","Latitude"), crs = 4326)
 ```
 
 `r format(Sys.time(), "%d %B %Y")`
 
 # Interative map viewer
 
-Planned compulsory (blue), adaptive (red), marine mammal (green), Saildrone (orange), and UCTD (gray) stations/transects. You may pan (click-and-drag or use arrow keys), zoom (using the +/- key, your mouse wheel, or the controls on the map), and click objects to view more details about map features. Different base maps may be chosen and layers may be toggled on/off using the layer control feature in the upper left corner. Additional waypoint information may be found in the tables below the map.
+Planned compulsory (blue), adaptive (red), marine mammal (green), Saildrone (orange), and UCTD (black) stations/transects. You may pan (click-and-drag or use arrow keys), zoom (using the +/- key, your mouse wheel, or the controls on the map), and click objects to view more details about map features. Different base maps may be chosen and layers may be toggled on/off using the layer control feature in the upper left corner. Additional waypoint information may be found in the tables below the map.
 
-```{r Leaflet,eval=F}
+```{r map-leaflet}
 # https://bhaskarvk.github.io/leaflet-talk-rstudioconf-2017/RstudioConf2017.html#18
 
 # Configure palette for MPAs
 factpal <- colorFactor(topo.colors(10), ca_mpas$MPA)
+# Create color pallette for planned transects
+txPal    <- colorFactor(c("red","blue","green","orange","yellow","gray"), 
+                        c("adaptive","compulsory","mammal","saildrone","transit","extra"))
 
 # Create leaflet map
 leaflet() %>% 
-  addProviderTiles(leaflet.tile) %>% 
-  addPolygons(data = ca_waters, weight = 2, color = "black", fillColor = "transparent") %>% 
+  addProviderTiles(leaflet.tile) %>%
+  # Add state waters
+  addPolygons(data = ca_waters, weight = 2, color = "black", fillColor = "transparent",
+              label = ~htmlEscape("CA State Waters"),
+              group = "State Waters") %>% 
+  addPolygons(data = or_waters, weight = 2, color = "black", fillColor = "transparent", 
+              label = ~htmlEscape("OR State Waters"),
+              group = "State Waters") %>%
+  # Add Sanctuaries and MPAs
   addPolygons(data = ca_mpas, color = "black", weight = 2, fillColor =  ~factpal(MPA), fillOpacity = 1,
-              label = ~htmlEscape(MPA)) %>%
-  addPolylines(data = tx.c, color = "blue", weight = 2) %>% 
-  addPolylines(data = tx.a, color = "red", weight = 2) %>% 
-  addPolylines(data = tx.m, color = "green", weight = 2) %>% 
-  addPolylines(data = tx.s, color = "orange", weight = 4) %>% 
-  addCircleMarkers(data = wpt.a, radius = 3, color = "red", stroke = FALSE, fillOpacity = 0.75,
-                   label = ~htmlEscape(paste("Adaptive", Waypoint, lat, "N", long, "W"))) %>% 
-  addCircleMarkers(data = wpt.c, radius = 3, color = "blue", stroke = FALSE, fillOpacity = 0.75,
-                   label = ~htmlEscape(paste("Compulsory", Waypoint, lat, "N", long, "W"))) %>% 
-  addCircleMarkers(data = wpt.s, radius = 3, color = "orange", stroke = FALSE, fillOpacity = 0.75,
-                   label = ~htmlEscape(paste("Saildrone", Waypoint, lat, "N", long, "W"))) %>% 
-  addCircleMarkers(data = wpt.m, radius = 3, color = "green", stroke = FALSE, fillOpacity = 0.75,
-                   label = ~htmlEscape(paste("Marine mammal", Waypoint, lat, "N", long, "W"))) %>% 
-  addCircleMarkers(data = wpt.u, radius = 2, color = "black", fill = "transparent", stroke = TRUE,
-                   label = ~htmlEscape(paste(Name, lat, "N", long, "W"))) %>% 
-  addMouseCoordinates(style = "basic")
-```
-
-```{r Mapview, out.width='100%'}
-# Select tiles to use for Leaflet map
-# Some good options include CartoDB.Positron, Stamen.Terrain, Esri.WorldImagery, and Esri.OceanBasemap
-# View all here: http://leaflet-extras.github.io/leaflet-providers/preview/index.html
-
-# Configure mapview options
-mapviewOptions(basemaps = c("Esri.OceanBasemap","Esri.WorldImagery","CartoDB.Positron"))
-
-# Create mapview map
-mapview(ca_waters, alpha = 0.7, alpha.region = 0.1, layer.name = "CA State Waters") +
-  mapview(ca_mpas, zcol = "Type", layer.name = "CA MPAs") +
-  mapview(tx.80, color = "black",  alpha = 0.5, layer.name = "CalCOFI", col.regions = "black") +
-  mapview(wpt.80,color = "black",  cex = 4,     layer.name = "CalCOFI") +
-  mapview(tx.c,  color = "blue",   alpha = 0.5, layer.name = "Compulsory Lines", col.regions = "blue") +
-  mapview(wpt.c, color = "blue",   cex = 4,     layer.name = "Compulsory Lines") +
-  mapview(tx.a,  color = "red",    alpha = 0.5, layer.name = "Adaptive Lines") +
-  mapview(wpt.a, color = "red",    cex = 4,     layer.name = "Adaptive Lines", col.regions = "red")  +
-  mapview(tx.m,  color = "green",  alpha = 0.5, layer.name = "Mammal Lines") +
-  mapview(wpt.m, color = "green",  cex = 4,     layer.name = "Mammal Lines", col.regions = "green") +  
-  mapview(tx.s,  color = "orange", alpha = 0.5, layer.name = "Saildrone Lines") +
-  mapview(wpt.s, color = "orange", cex = 4,     layer.name = "Saildrone Lines", col.regions = "orange") +  
-  mapview(tx.t,  color = "yellow", alpha = 0.5, layer.name = "Transit Lines") +
-  mapview(wpt.t, color = "yellow", cex = 4,     layer.name = "Transit Lines") + 
-  mapview(wpt.u, color = "black",  cex = 2,     layer.name = "UCTD Stations", col.regions = "black") +
-  mapview(nav.sf, color = "gray50", layer.name = "Vessel track")
+              label = ~htmlEscape(MPA),
+              group = "MPAs") %>%
+  addPolygons(data = nms, color = "#000414", weight = 2, 
+              label = ~htmlEscape(NAME), 
+              group = "MPAs") %>%
+  # Add transects and waypoings
+  addPolylines(data = tx.sf, color = ~txPal(tolower(Type)), weight = 3, 
+               label = ~htmlEscape(paste(Type, Transect)), 
+               group = "Planned Transects") %>%
+  addCircleMarkers(data = wpt.sf,
+                   radius = 3, color = "#000414", stroke = F,
+                   fillOpacity = 0.75, fillColor =  ~txPal(tolower(Type)),
+                   label = ~htmlEscape(paste(Type, Waypoint)),
+                   group = "Planned Transects") %>%
+  # Add UCTD stations
+  addCircleMarkers(data = uctd.sf,
+                   radius = 3, color = "#000414", stroke = F,
+                   fillOpacity = 0.75,
+                   label = ~htmlEscape(paste(Name)),
+                   group = "UCTD Stations") %>%
+  # Add nav data
+  addPolylines(data = nav.sf, color = "#000414", weight = 1, 
+               label = "Vessel Track", 
+               group = "Vessel Track") %>%
+  # Add minimap
+  addMiniMap(position = "topright") %>% 
+  # Add scale bar
+  addScaleBar(position = "bottomright") %>%
+  # Add map coordinates
+  addMouseCoordinates() %>% 
+  # Add measurement tool
+  addMeasure(primaryLengthUnit = "miles", secondaryLengthUnit = "km",
+             primaryAreaUnit = "sqmiles", secondaryAreaUnit = "sqmeters",
+             position = "topleft") %>% 
+  # Add layer controls
+  addLayersControl(
+    overlayGroups = c("MPAs", "State Waters", "Planned Transects", 
+                      "Vessel Track", "UCTD Stations"),
+    options = layersControlOptions(collapsed = F)) 
 ```
 
 # Compulsory waypoints
@@ -272,11 +216,6 @@ mapview(ca_waters, alpha = 0.7, alpha.region = 0.1, layer.name = "CA State Water
 ```{r}
 # Print cluster check table
 filter(wpt, Type == "Compulsory") %>% 
-  # kable(format = knitr.format,booktabs = T, escape = F,
-  #       align = c("c")) %>% 
-  # kable_styling(bootstrap_options = c("striped","hover","condensed"),full_width = F) %>%
-  # row_spec(0, align = c("c")) %>% 
-  # scroll_box(height = "500px")
   datatable()
 ```
 
@@ -285,12 +224,7 @@ filter(wpt, Type == "Compulsory") %>%
 ```{r}
 # Print cluster check table
 filter(wpt, Type == "Adaptive") %>% 
-  # kable(format = knitr.format,booktabs = T, escape = F,
-  #       align = c("c")) %>% 
-  # kable_styling(bootstrap_options = c("striped","hover","condensed"),full_width = F) %>%
-  # row_spec(0, align = c("c")) %>% 
-  # scroll_box(height = "500px")
-  datatable()
+ datatable()
 ```
 
 # Saildrone waypoints
@@ -298,11 +232,6 @@ filter(wpt, Type == "Adaptive") %>%
 ```{r}
 # Print cluster check table
 filter(wpt, Type == "Saildrone") %>% 
-  # kable(format = knitr.format,booktabs = T, escape = F,
-  #       align = c("c")) %>% 
-  # kable_styling(bootstrap_options = c("striped","hover","condensed"),full_width = F) %>%
-  # row_spec(0, align = c("c")) %>% 
-  # scroll_box(height = "500px")
   datatable()
 ```
 
@@ -311,12 +240,7 @@ filter(wpt, Type == "Saildrone") %>%
 ```{r}
 # Print cluster check table
 filter(wpt, Type == "Mammal") %>% 
-  # kable(format = knitr.format,booktabs = T, escape = F,
-  #       align = c("c")) %>% 
-  # kable_styling(bootstrap_options = c("striped","hover","condensed"),full_width = F) %>%
-  # row_spec(0, align = c("c")) %>% 
-  # scroll_box(height = "500px")
-  datatable()
+ datatable()
 ```
 
 # UCTD waypoints
@@ -324,11 +248,6 @@ filter(wpt, Type == "Mammal") %>%
 ```{r}
 # Print cluster check table
 uctd %>% 
-  # kable(format = knitr.format,booktabs = T, escape = F,
-  #       align = c("c")) %>% 
-  # kable_styling(bootstrap_options = c("striped","hover","condensed"),full_width = F) %>%
-  # row_spec(0, align = c("c")) %>% 
-  # scroll_box(height = "500px")
   datatable()
 ```
 
